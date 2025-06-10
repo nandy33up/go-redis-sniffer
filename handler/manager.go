@@ -22,7 +22,7 @@ func NewManager(cfg *config.Config) *Manager {
 
 func (m *Manager) Start() {
 	go m.producer.Start()
-	go m.consumer.Start(m.producer.PacketChan())
+	go m.consumer.Start(m.producer.packets)
 }
 
 func (m *Manager) Stop() {

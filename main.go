@@ -17,7 +17,7 @@ var cfg = new(config.Config)
 func init() {
 	flag.IntVar(&cfg.RedisPort, "port", 0, "redis port")
 	flag.BoolVar(&cfg.StrictMode, "strict-mode", false, "error exit")
-	flag.StringVar(&cfg.Device, "net device", "any", "eth0 lo ...")
+	flag.StringVar(&cfg.Device, "device", "any", "eth0 lo ...")
 	flag.Parse()
 	if cfg.RedisPort == 0 {
 		fmt.Println("sidecar for redis network monitoring, usage:")

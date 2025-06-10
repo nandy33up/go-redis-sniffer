@@ -9,32 +9,33 @@ import (
 	"github.com/google/gopacket/pcap"
 
 	"go-redis-sniffer/config"
-	"go-redis-sniffer/utils"
 )
 
 type Packet struct {
 	Timestamp time.Time
+	IsReq     bool // 客户端数据发送 or 服务端数据返回
+	Seq       uint32
 	SrcIP     net.IP
 	DstIP     net.IP
 	SrcPort   layers.TCPPort
 	DstPort   layers.TCPPort
 	Payload   []byte
-	Direction string
 }
 
 type Producer struct {
 	config   *config.Config
-	packets  chan *Packet
 	stopChan chan struct{}
+	packets  chan *Packet
 	ticker   *time.Ticker
 }
 
 func NewProducer(cfg *config.Config) *Producer {
+	d := 2 * time.Second
 	return &Producer{
 		config:   cfg,
-		packets:  make(chan *Packet, cfg.PacketChanSize),
 		stopChan: make(chan struct{}),
-		ticker:   time.NewTicker(10 * time.Second), // 定时器用于定期检查
+		packets:  make(chan *Packet, cfg.PacketChanSize),
+		ticker:   time.NewTicker(d),
 	}
 }
 
@@ -58,7 +59,7 @@ func (p *Producer) Start() {
 				p.processPacket(packet)
 			}
 		case <-p.ticker.C:
-			config.Logger.Println("Packet queue suze:", len(p.packets))
+			config.Logger.Println("Producer packet size:", len(p.packets))
 		case <-p.stopChan:
 			config.Logger.Println("Producer stopped")
 			return
@@ -95,18 +96,19 @@ func (p *Producer) processPacket(packet gopacket.Packet) {
 	default:
 		return
 	}
-
-	p.packets <- &Packet{
+	pkt := &Packet{
 		Timestamp: packet.Metadata().Timestamp,
+		IsReq:     tcp.DstPort == layers.TCPPort(p.config.RedisPort),
 		SrcIP:     srcIP,
 		DstIP:     dstIP,
 		SrcPort:   tcp.SrcPort,
 		DstPort:   tcp.DstPort,
 		Payload:   tcp.Payload,
-		Direction: utils.IF(tcp.DstPort == 6379, "->", "<-"),
 	}
-}
-
-func (p *Producer) PacketChan() <-chan *Packet {
-	return p.packets
+	if pkt.IsReq {
+		pkt.Seq = tcp.Ack
+	} else {
+		pkt.Seq = tcp.Seq
+	}
+	p.packets <- pkt
 }

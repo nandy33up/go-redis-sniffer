@@ -2,38 +2,55 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"fmt"
-	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"go-redis-sniffer/config"
+
+	"github.com/allegro/bigcache/v3"
+	"github.com/bytedance/sonic"
 )
+
+var json = sonic.ConfigFastest
 
 type Consumer struct {
 	config   *config.Config
 	stopChan chan struct{}
+	cacher   *bigcache.BigCache
+	ticker   *time.Ticker
 }
 
 func NewConsumer(cfg *config.Config) *Consumer {
+	d := 2 * time.Second
+	cache, err := bigcache.New(context.Background(), bigcache.DefaultConfig(d))
+	if err != nil {
+		config.Logger.Fatalf("Failed to create cache: %v", err)
+	}
 	return &Consumer{
 		config:   cfg,
 		stopChan: make(chan struct{}),
+		cacher:   cache,
+		ticker:   time.NewTicker(d),
 	}
 }
 
-func (c *Consumer) Start(packetChan <-chan *Packet) {
+func (c *Consumer) Start(packets <-chan *Packet) {
 	config.Logger.Println("Consumer started")
 	for {
 		select {
+		case packet := <-packets:
+			if len(packet.Payload) > 0 {
+				if err := c.processPacket(packet); err != nil && c.config.StrictMode {
+					config.Logger.Fatalf("Error processing packet: %v", err)
+				}
+			}
+		case <-c.ticker.C:
+			config.Logger.Println("Consumer cacher size:", c.cacher.Len())
 		case <-c.stopChan:
 			config.Logger.Println("Consumer stopped")
 			return
-		case packet := <-packetChan:
-			if len(packet.Payload) > 0 {
-				c.processPacket(packet)
-			}
 		}
 	}
 }
@@ -42,80 +59,86 @@ func (c *Consumer) Stop() {
 	close(c.stopChan)
 }
 
-func (c *Consumer) processPacket(packet *Packet) {
-	redisCmd := RedisCommand{
+func (c *Consumer) processPacket(packet *Packet) error {
+	cmd := &Command{
 		Timestamp:  packet.Timestamp,
-		Client:     fmt.Sprintf("%s:%d", packet.SrcIP, packet.SrcPort),
-		Server:     fmt.Sprintf("%s:%d", packet.DstIP, packet.DstPort),
-		Direction:  packet.Direction,
+		Src:        fmt.Appendf(nil, "%s:%d", packet.SrcIP, packet.SrcPort),
+		Dst:        fmt.Appendf(nil, "%s:%d", packet.DstIP, packet.DstPort),
 		RawCommand: bytes.TrimSpace(packet.Payload),
 	}
-	if redisCmd.RawCommand[0] == '*' {
-		// RESP协议格式
-		if err := redisCmd.parseRESPProtocol(); err != nil && c.config.StrictMode {
-			config.Logger.Fatal(err)
+	if err := cmd.parse(); err != nil {
+		return err
+	}
+	if packet.IsReq {
+		key := fmt.Sprintf("%s%s%d", cmd.Src, cmd.Dst, packet.Seq)
+		val, _ := json.Marshal(cmd)
+		if err := c.cacher.Set(key, val); err != nil {
+			return err
 		}
 	} else {
-		// 行内命令格式
-		if err := redisCmd.parseInlineProtocol(); err != nil && c.config.StrictMode {
-			config.Logger.Fatal(err)
+		key := fmt.Sprintf("%s%s%d", cmd.Dst, cmd.Src, packet.Seq)
+		if val, err := c.cacher.Get(key); err == nil {
+			var req *Command
+			json.Unmarshal(val, &req)
+			config.Logger.Printf("Client req %s %s %s | %d | %s\n", req.Src, "->", req.Dst, packet.Seq, req.command())
+			c.cacher.Delete(key)
 		}
+		config.Logger.Printf("Server rsp %s %s %s | %d | %s\n", cmd.Dst, "<-", cmd.Src, packet.Seq, cmd.command())
 	}
-	config.Logger.Printf("%s %s %s | %s\n", redisCmd.Client, redisCmd.Direction, redisCmd.Server, redisCmd.String())
+	return nil
 }
 
-// 解析后的Redis命令
-type RedisCommand struct {
+type Command struct {
 	Timestamp  time.Time
-	Client     string
-	Server     string
-	Direction  string
+	Src        []byte
+	Dst        []byte
 	RawCommand []byte
-	Args       []string
-	IsInline   bool
+	Args       [][]byte
 }
 
-func (cmd *RedisCommand) parseRESPProtocol() error {
-	defer func() {
+func (cmd *Command) parse() error {
+	defer func() error {
 		if r := recover(); r != nil {
-			println("Error parsing RESP command")
-			println(string(cmd.RawCommand))
-			os.Exit(1)
+			return fmt.Errorf("invalid RESP format")
 		}
+		return nil
 	}()
-	count := []byte{}
-	parts := bytes.Split(cmd.RawCommand, []byte("\r\n"))
+	// RESP协议格式
+	if cmd.RawCommand[0] == '*' {
+		return cmd.parseRESPProtocol()
+	}
+	// 行内命令格式
+	return cmd.parseLineProtocol()
+}
+
+func (cmd *Command) parseRESPProtocol() error {
+	lens := []byte{}
+	args := bytes.Split(cmd.RawCommand, []byte("\r\n"))
 	// 参数检查
-	count, parts = parts[0], parts[1:]
-	n, err := strconv.Atoi(string(count[1:]))
+	lens, args = args[0], args[1:]
+	n, err := strconv.Atoi(string(lens[1:]))
 	if err != nil {
-		return fmt.Errorf("invalid RESP format, count: %s", string(count))
+		return fmt.Errorf("invalid RESP format, lens: %s", string(lens))
 	}
 	if n == 0 {
 		return nil
 	}
-	if len(parts) < 2 {
-		return fmt.Errorf("invalid RESP format, parts: %s", string(cmd.RawCommand))
-	}
 	// 参数整理
-	args := make([]string, 0, n/2)
-	for _, part := range parts {
-		if len(part) > 0 && part[0] == '$' {
-			continue
+	cmd.Args = make([][]byte, 0, n/2)
+	for _, arg := range args {
+		if !bytes.HasPrefix(arg, []byte("$")) {
+			cmd.Args = append(cmd.Args, arg)
 		}
-		args = append(args, string(part))
 	}
-	cmd.Args = args
 	return nil
 }
 
-func (cmd *RedisCommand) parseInlineProtocol() error {
-	cmd.IsInline = true
-	cmd.Args = strings.Fields(string(cmd.RawCommand))
+func (cmd *Command) parseLineProtocol() error {
+	cmd.Args = bytes.Split(cmd.RawCommand, []byte("\r\n"))
 	return nil
 }
 
 // 完整命令
-func (cmd *RedisCommand) String() string {
-	return strings.Join(cmd.Args, " ")
+func (cmd *Command) command() []byte {
+	return bytes.Join(cmd.Args, []byte(" "))
 }
