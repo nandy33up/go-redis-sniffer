@@ -5,7 +5,7 @@ go redis sniffer
 $ ./go-redis-sniffer
 sidecar for redis network monitoring, usage:
 ./go-redis-sniffer -port=6379
-  -net device string
+  -device string
         eth0 lo ... (default "any")
   -port int
         redis port
