@@ -2,15 +2,13 @@ package handler
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"strconv"
 	"time"
 
-	"go-redis-sniffer/config"
-
-	"github.com/allegro/bigcache/v3"
 	"github.com/bytedance/sonic"
+
+	"go-redis-sniffer/config"
 )
 
 var json = sonic.ConfigFastest
@@ -18,21 +16,12 @@ var json = sonic.ConfigFastest
 type Consumer struct {
 	config   *config.Config
 	stopChan chan struct{}
-	cacher   *bigcache.BigCache
-	ticker   *time.Ticker
 }
 
 func NewConsumer(cfg *config.Config) *Consumer {
-	d := 2 * time.Second
-	cache, err := bigcache.New(context.Background(), bigcache.DefaultConfig(d))
-	if err != nil {
-		config.Logger.Fatalf("Failed to create cache: %v", err)
-	}
 	return &Consumer{
 		config:   cfg,
 		stopChan: make(chan struct{}),
-		cacher:   cache,
-		ticker:   time.NewTicker(d),
 	}
 }
 
@@ -46,8 +35,6 @@ func (c *Consumer) Start(packets <-chan *Packet) {
 					config.Logger.Fatalf("Error processing packet: %v", err)
 				}
 			}
-		case <-c.ticker.C:
-			config.Logger.Println("Consumer cacher size:", c.cacher.Len())
 		case <-c.stopChan:
 			config.Logger.Println("Consumer stopped")
 			return
@@ -68,22 +55,6 @@ func (c *Consumer) processPacket(packet *Packet) error {
 	}
 	if err := cmd.parse(); err != nil {
 		return err
-	}
-	if packet.IsReq {
-		key := fmt.Sprintf("%s%s%d", cmd.Src, cmd.Dst, packet.Seq)
-		val, _ := json.Marshal(cmd)
-		if err := c.cacher.Set(key, val); err != nil {
-			return err
-		}
-	} else {
-		key := fmt.Sprintf("%s%s%d", cmd.Dst, cmd.Src, packet.Seq)
-		if val, err := c.cacher.Get(key); err == nil {
-			var req *Command
-			json.Unmarshal(val, &req)
-			config.Logger.Printf("Client req %s %s %s | %d | %s\n", req.Src, "->", req.Dst, packet.Seq, req.command())
-			c.cacher.Delete(key)
-		}
-		config.Logger.Printf("Server rsp %s %s %s | %d | %s\n", cmd.Dst, "<-", cmd.Src, packet.Seq, cmd.command())
 	}
 	return nil
 }

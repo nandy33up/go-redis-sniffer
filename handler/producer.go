@@ -13,8 +13,8 @@ import (
 
 type Packet struct {
 	Timestamp time.Time
-	IsReq     bool // 客户端数据发送 or 服务端数据返回
 	Seq       uint32
+	Ack       uint32
 	SrcIP     net.IP
 	DstIP     net.IP
 	SrcPort   layers.TCPPort
@@ -96,19 +96,14 @@ func (p *Producer) processPacket(packet gopacket.Packet) {
 	default:
 		return
 	}
-	pkt := &Packet{
+	p.packets <- &Packet{
 		Timestamp: packet.Metadata().Timestamp,
-		IsReq:     tcp.DstPort == layers.TCPPort(p.config.RedisPort),
+		Seq:       tcp.Seq,
+		Ack:       tcp.Ack,
 		SrcIP:     srcIP,
 		DstIP:     dstIP,
 		SrcPort:   tcp.SrcPort,
 		DstPort:   tcp.DstPort,
 		Payload:   tcp.Payload,
 	}
-	if pkt.IsReq {
-		pkt.Seq = tcp.Ack
-	} else {
-		pkt.Seq = tcp.Seq
-	}
-	p.packets <- pkt
 }
