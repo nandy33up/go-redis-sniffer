@@ -3,7 +3,6 @@ module go-redis-sniffer
 go 1.24.2
 
 require (
-	github.com/allegro/bigcache/v3 v3.1.0
 	github.com/bytedance/sonic v1.13.3
 	github.com/google/gopacket v1.1.19
 	github.com/panjf2000/ants/v2 v2.11.3

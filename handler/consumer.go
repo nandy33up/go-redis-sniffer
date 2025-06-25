@@ -56,6 +56,7 @@ func (c *Consumer) processPacket(packet *Packet) error {
 	if err := cmd.parse(); err != nil {
 		return err
 	}
+	config.Logger.Printf("%s -> %s | Seq: %d Ack: %d | %s\n", cmd.Src, cmd.Dst, packet.Seq, packet.Ack, cmd.command())
 	return nil
 }
 
