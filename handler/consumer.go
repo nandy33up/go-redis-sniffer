@@ -56,7 +56,11 @@ func (c *Consumer) processPacket(packet *Packet) error {
 	if err := cmd.parse(); err != nil {
 		return err
 	}
-	config.Logger.Printf("%s -> %s | Seq: %d Ack: %d | %s\n", cmd.Src, cmd.Dst, packet.Seq, packet.Ack, cmd.command())
+	if packet.DstPort == c.config.RedisPort {
+		config.Logger.Printf("| %s -> %s | Seq: %d Ack: %d | %s\n", cmd.Src, cmd.Dst, packet.Seq, packet.Ack, cmd.command())
+	} else {
+		config.Logger.Printf("| %s <- %s | Seq: %d Ack: %d | %s\n", cmd.Dst, cmd.Src, packet.Seq, packet.Ack, cmd.command())
+	}
 	return nil
 }
 

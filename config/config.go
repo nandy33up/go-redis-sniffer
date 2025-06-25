@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/google/gopacket/layers"
 	"github.com/panjf2000/ants/v2"
 )
 
@@ -14,13 +15,13 @@ var (
 )
 
 type Config struct {
-	RedisPort      int    //
-	StrictMode     bool   // "strict" or "loose"
-	Device         string //
-	SnapshotLen    int32  //
-	BPFFilter      string //
-	PoolSize       int    //
-	PacketChanSize int    //
+	RedisPort      layers.TCPPort //
+	StrictMode     bool           // "strict" or "loose"
+	Device         string         //
+	SnapshotLen    int32          //
+	BPFFilter      string         //
+	PoolSize       int            //
+	PacketChanSize int            //
 }
 
 func NewConfig(cfgs ...*Config) *Config {

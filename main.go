@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/gopacket/layers"
+
 	"go-redis-sniffer/config"
 	"go-redis-sniffer/handler"
 )
@@ -15,16 +17,18 @@ import (
 var cfg = new(config.Config)
 
 func init() {
-	flag.IntVar(&cfg.RedisPort, "port", 0, "redis port")
+	var port int
+	flag.IntVar(&port, "port", 0, "redis port")
 	flag.BoolVar(&cfg.StrictMode, "strict-mode", false, "error exit")
 	flag.StringVar(&cfg.Device, "device", "any", "eth0 lo ...")
 	flag.Parse()
-	if cfg.RedisPort == 0 {
+	if port == 0 {
 		fmt.Println("sidecar for redis network monitoring, usage:")
 		fmt.Println("./go-redis-sniffer -port=6379")
 		flag.PrintDefaults()
 		os.Exit(0)
 	}
+	cfg.RedisPort = layers.TCPPort(port)
 	cfg = config.NewConfig(cfg)
 }
 
